@@ -89,7 +89,7 @@ def check_and_notify():
                 event_key = (symbol, 'price_up')
                 if can_notify(event_key):
                     msg = (
-                        f"📈 *{symbol} è salita del +{price_change*100:.2f}%* in 5 minuti\n"
+                        f"🟢🟢🟢🟢📈 *{symbol} è salita del +{price_change*100:.2f}%* in 5 minuti\n"
                         f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
@@ -113,7 +113,7 @@ def check_and_notify():
                 event_key = (symbol, 'price_down')
                 if can_notify(event_key):
                     msg = (
-                        f"📉 *{symbol} è scesa del -{abs(price_change)*100:.2f}%* in 5 minuti\n"
+                        f"🔴🔴🔴🔴📉 *{symbol} è scesa del -{abs(price_change)*100:.2f}%* in 5 minuti\n"
                         f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
