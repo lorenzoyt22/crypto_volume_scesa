@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # CONFIG
 GROWTH_THRESHOLD_UP = 0.04    # +4%
 GROWTH_THRESHOLD_DOWN = -0.02 # -2%
-VOLUME_INCREASE_THRESHOLD = 50.0  # +5000%
+VOLUME_INCREASE_THRESHOLD = 70.0  # +7000%
 TIMEFRAME = '5m'
 EXCHANGE = ccxt.coinbase()  
 SYMBOLS = ['AUCTION-USD', 'RLC-USD', 'TAIKO-USD', 'BAL-USD', 'POND-USD', 'CHILLGUY-USD', 'ABT-USD', 'AGLD-USD', 'NMR-USD', 'OCEAN-USD', 'CTSI-USD', 'AERGO-USD', 'MAGIC-USD', 
@@ -101,7 +101,7 @@ def check_and_notify():
                 event_key = (symbol, 'price_up_15m')
                 if can_notify(event_key):
                     msg = (
-                        f"📈 *{symbol} è salita del +{price_change_15m*100:.2f}%* negli ultimi 15 minuti\n"
+                        f"🟢🟢🟢🟢📈 *{symbol} è salita del +{price_change_15m*100:.2f}%* negli ultimi 15 minuti\n"
                         f"💵 *Prezzo:* {old_close:.4f} → {last_close:.4f} USD\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
@@ -122,18 +122,21 @@ def check_and_notify():
 
             # Controllo aumento volume > +5000% (anche se prezzo non sale del 4%)
             elif volume_change >= VOLUME_INCREASE_THRESHOLD:
-                event_key = (symbol, 'volume_up')
+                price_diff_pct = ((last_close - prev_close) / prev_close) * 100 if prev_close > 0 else 0
+
+                if abs(price_diff_pct) >= 1.5:
+                    event_key = (symbol, 'volume_up')
                 if can_notify(event_key):
-                    price_diff_pct = ((last_close - prev_close) / prev_close) * 100 if prev_close > 0 else 0
+                    color_emoji = "🟢" if price_diff_pct > 0 else "🔴"
                     msg = (
-                        f"🔊 *{symbol} volume ↑ +{volume_change*100:.2f}%* in 5 minuti\n"
-                        f"📈 *Prezzo prima aumento volume:* {prev_close:.4f} USD\n"
-                        f"📉 *Prezzo attuale:* {last_close:.4f} USD\n"
+                        f"🔊 {color_emoji} *{symbol} volume ↑ +{volume_change*100:.2f}%* in 5 minuti\n"
+                        f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
                         f"📊 *Differenza prezzo:* {price_diff_pct:+.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                    )
-                    send_telegram_message(msg)
-                    notified_events[event_key] = now
+                )
+            send_telegram_message(msg)
+            notified_events[event_key] = now
+
 
         except Exception as e:
             print(f"Errore con {symbol}: {e}")
