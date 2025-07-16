@@ -81,16 +81,12 @@ def check_and_notify():
                 key = (symbol, 'price_up')
                 if can_notify(key):
                     msg = (
-                        "🟢🟢🟢🟢📈 *{sym} è salita del +{pct:.2f}% in 5 minuti*\n"
-                        "💵 *Prezzo:* {from_: .4f} → {to: .4f} USD\n"
-                        "📊 *Differenza prezzo:* +{pct:.2f}%\n"
-                        "🕒 *Orario:* {time} UTC"
-                    ).format(
-                        sym=symbol, pct=price_change*100,
-                        from_=prev_close, to=last_close,
-                        time=now.strftime('%Y-%m-%d %H:%M:%S')
+                        f"🟢🟢🟢🟢📈 *{symbol} è salita del +{price_change*100:.2f}% in 5 minuti*\n"
+                        f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
+                        f"📊 *Differenza prezzo:* +{price_change*100:.2f}%\n"
+                        f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
-                    send_telegram_message(msg)
+                   	send_telegram_message(msg)
                     notified_events[key] = now
 
             # Prezzo ↑ 15m
@@ -98,16 +94,12 @@ def check_and_notify():
                 key = (symbol, 'price_up_15m')
                 if can_notify(key):
                     msg = (
-                        "🟢🟢🟢🟢📈 *{sym} è salita del +{pct:.2f}% negli ultimi 15 minuti*\n"
-                        "💵 *Prezzo:* {from_: .4f} → {to: .4f} USD\n"
-                        "📊 *Differenza prezzo:* +{pct:.2f}%\n"
-                        "🕒 *Orario:* {time} UTC"
-                    ).format(
-                        sym=symbol, pct=price_change_15*100,
-                        from_=old_close, to=last_close,
-                        time=now.strftime('%Y-%m-%d %H:%M:%S')
+                        f"🟢🟢🟢🟢📈 *{symbol} è salita del +{price_change_15*100:.2f}% negli ultimi 15 minuti*\n"
+                        f"💵 *Prezzo:* {old_close:.4f} → {last_close:.4f} USD\n"
+                        f"📊 *Differenza prezzo:* +{price_change_15*100:.2f}%\n"
+                        f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
-                    send_telegram_message(msg)
+                   	send_telegram_message(msg)
                     notified_events[key] = now
 
             # Prezzo ↓ 5m
@@ -116,28 +108,25 @@ def check_and_notify():
                 if can_notify(key):
                     pct = abs(price_change*100)
                     msg = (
-                        "🔴🔴🔴🔴📉 *{sym} è scesa del -{pct:.2f}% in 5 minuti*\n"
-                        "💵 *Prezzo:* {from_: .4f} → {to: .4f} USD\n"
-                        "📊 *Differenza prezzo:* -{pct:.2f}%\n"
-                        "🕒 *Orario:* {time} UTC"
-                    ).format(
-                        sym=symbol, pct=pct,
-                        from_=prev_close, to=last_close,
-                        time=now.strftime('%Y-%m-%d %H:%M:%S')
+                        f"🔴🔴🔴🔴📉 *{symbol} è scesa del -{pct:.2f}% in 5 minuti*\n"
+                        f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
+                        f"📊 *Differenza prezzo:* -{pct:.2f}%\n"
+                        f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
-                    send_telegram_message(msg)
+                   	send_telegram_message(msg)
                     notified_events[key] = now
 
             # Volume ↑ ≥7000% + variaz. prezzo ≥±1.5%
             elif volume_change >= VOLUME_INCREASE_THRESHOLD:
-                price_diff_pct = ((last_close - prev_close) / prev_close * 100) if prev_close > 0 else 0
+                price_diff_pct = (last_close - prev_close) / prev_close * 100 if prev_close > 0 else 0
                 if abs(price_diff_pct) >= 1.5:
                     key = (symbol, 'volume_up')
                     if can_notify(key):
                         color = "🟢" if price_diff_pct > 0 else "🔴"
                         msg = (
                             f"{color}🔊 *{symbol} volume ↑ +{volume_change*100:.2f}% in 5 minuti*\n"
-                            f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
+                            f"📈 *Prezzo prima aumento volume:* {prev_close:.4f} USD\n"
+                            f"📉 *Prezzo attuale:* {last_close:.4f} USD\n"
                             f"📊 *Differenza prezzo:* {price_diff_pct:+.2f}%\n"
                             f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                         )
