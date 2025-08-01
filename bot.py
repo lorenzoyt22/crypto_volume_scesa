@@ -41,7 +41,6 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 # Memoria notifiche inviate: { (symbol, tipo_evento) : datetime_ultimo_invio }
 notified_events = {}
 
-
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {
@@ -54,7 +53,6 @@ def send_telegram_message(message):
         response.raise_for_status()
     except Exception as e:
         print(f"Errore invio Telegram: {e}")
-
 
 def check_and_notify():
     global notified_events
@@ -71,14 +69,14 @@ def check_and_notify():
             old_vol, prev_vol, last_vol = old_candle[5], prev_candle[5], last_candle[5]
 
             price_change = (last_close - prev_close) / prev_close if prev_close > 0 else 0
-            price_change_15 = (last_close - old_close) / old_close if old_close > 0 else 0
+            # price_change_15 = (last_close - old_close) / old_close if old_close > 0 else 0  # Non usato ora
             volume_change = (last_vol - prev_vol) / prev_vol if prev_vol > 0 else 0
 
             def can_notify(key, cooldown=60):
                 last = notified_events.get(key)
                 return last is None or (now - last) > timedelta(minutes=cooldown)
 
-            # Solo un tipo di messaggio per crescita o calo prezzo (con pallini)
+            # Alert per crescita prezzo
             if price_change >= GROWTH_THRESHOLD_UP:
                 key = (symbol, 'price_up')
                 if can_notify(key):
@@ -91,6 +89,7 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
+            # Alert per calo prezzo
             elif price_change <= GROWTH_THRESHOLD_DOWN:
                 key = (symbol, 'price_down')
                 if can_notify(key):
@@ -104,8 +103,8 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # Volume ↑ ≥7000% e prezzo cambia di almeno ±2%
-            elif volume_change >= VOLUME_INCREASE_THRESHOLD:
+            # Alert per volume solo se aumenta almeno del 7000% E prezzo cambia almeno del ±2%
+            if volume_change >= VOLUME_INCREASE_THRESHOLD:
                 price_diff_pct = (last_close - prev_close) / prev_close * 100 if prev_close > 0 else 0
                 if abs(price_diff_pct) >= 2.0:
                     key = (symbol, 'volume_up')
@@ -131,7 +130,6 @@ def clean_memory():
     to_delete = [key for key, dt in notified_events.items() if (now - dt) > timedelta(hours=12)]
     for key in to_delete:
         del notified_events[key]
-
 
 if __name__ == "__main__":
     print("Bot crypto monitor avviato...")
