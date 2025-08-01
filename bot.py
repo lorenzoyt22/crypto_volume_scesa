@@ -78,7 +78,7 @@ def check_and_notify():
                 last = notified_events.get(key)
                 return last is None or (now - last) > timedelta(minutes=cooldown)
 
-            # Prezzo ↑ 5m
+            # Solo un tipo di messaggio per crescita o calo prezzo (con pallini)
             if price_change >= GROWTH_THRESHOLD_UP:
                 key = (symbol, 'price_up')
                 if can_notify(key):
@@ -91,20 +91,6 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # Prezzo ↑ 15m
-            if price_change_15 >= GROWTH_THRESHOLD_UP:
-                key = (symbol, 'price_up_15m')
-                if can_notify(key):
-                    msg = (
-                        f"🟢🟢🟢🟢📈 *{symbol} è salita del +{price_change_15*100:.2f}% negli ultimi 15 minuti*\n"
-                        f"💵 *Prezzo:* {old_close:.4f} → {last_close:.4f} USD\n"
-                        f"📊 *Differenza prezzo:* +{price_change_15*100:.2f}%\n"
-                        f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                    )
-                    send_telegram_message(msg)
-                    notified_events[key] = now
-
-            # Prezzo ↓ 5m
             elif price_change <= GROWTH_THRESHOLD_DOWN:
                 key = (symbol, 'price_down')
                 if can_notify(key):
@@ -118,17 +104,18 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # Volume ↑ ≥7000% + variaz. prezzo ≥±1.5%
+            # Volume ↑ ≥7000% e prezzo cambia di almeno ±2%
             elif volume_change >= VOLUME_INCREASE_THRESHOLD:
                 price_diff_pct = (last_close - prev_close) / prev_close * 100 if prev_close > 0 else 0
-                if abs(price_diff_pct) >= 1.5:
+                if abs(price_diff_pct) >= 2.0:
                     key = (symbol, 'volume_up')
                     if can_notify(key):
                         color = "🟢" if price_diff_pct > 0 else "🔴"
+                        direction = "📈" if price_diff_pct > 0 else "📉"
                         msg = (
                             f"{color}🔊 *{symbol} volume ↑ +{volume_change*100:.2f}% in 5 minuti*\n"
-                            f"📈 *Prezzo prima aumento volume:* {prev_close:.4f} USD\n"
-                            f"📉 *Prezzo attuale:* {last_close:.4f} USD\n"
+                            f"{direction} *Prezzo prima aumento volume:* {prev_close:.4f} USD\n"
+                            f"{direction} *Prezzo attuale:* {last_close:.4f} USD\n"
                             f"📊 *Differenza prezzo:* {price_diff_pct:+.2f}%\n"
                             f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                         )
@@ -137,7 +124,6 @@ def check_and_notify():
 
         except Exception as e:
             print(f"Errore con {symbol}: {e}")
-
 
 def clean_memory():
     """Pulisce la memoria notifiche più vecchie di 12 ore"""
