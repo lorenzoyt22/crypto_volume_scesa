@@ -2,7 +2,7 @@ import ccxt
 import os
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # CONFIG
 GROWTH_THRESHOLD_UP = 0.04    # +4%
@@ -11,7 +11,7 @@ VOLUME_INCREASE_THRESHOLD = 70.0  # +7000%
 TIMEFRAME = '5m'
 EXCHANGE = ccxt.coinbase()
 SYMBOLS = [
-    'AUCTION-USD', 'RLC-USD', 'TAIKO-USD', 'BAL-USD', 'POND-USD', 'CHILLGUY-USD', 'ABT-USD', 'AGLD-USD',
+     'AUCTION-USD', 'RLC-USD', 'TAIKO-USD', 'BAL-USD', 'POND-USD', 'CHILLGUY-USD', 'ABT-USD', 'AGLD-USD',
     'NMR-USD', 'OCEAN-USD', 'CTSI-USD', 'AERGO-USD', 'MAGIC-USD', 'PRO-USD', 'DIA-USD', 'C98-USD', 'ACS-USD',
     'CAT-USD', 'TAI-USD', 'CELR-USD', 'HFT-USD', 'TNSR-USD', 'GODS-USD', 'RARE-USD', 'FORT-USD', 'BOBA-USD',
     'FWOG-USD', 'TOKEN-USD', 'STORJ-USD', 'TRU-USD', 'NCT-USD', 'OGN-USD', 'OXT-USD', 'MIGGLES-USD',
@@ -56,7 +56,7 @@ def send_telegram_message(message):
 
 def check_and_notify():
     global notified_events
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     for symbol in SYMBOLS:
         try:
@@ -69,7 +69,6 @@ def check_and_notify():
             old_vol, prev_vol, last_vol = old_candle[5], prev_candle[5], last_candle[5]
 
             price_change = (last_close - prev_close) / prev_close if prev_close > 0 else 0
-            # price_change_15 = (last_close - old_close) / old_close if old_close > 0 else 0  # Non usato ora
             volume_change = (last_vol - prev_vol) / prev_vol if prev_vol > 0 else 0
 
             def can_notify(key, cooldown=60):
@@ -126,7 +125,7 @@ def check_and_notify():
 
 def clean_memory():
     """Pulisce la memoria notifiche più vecchie di 12 ore"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     to_delete = [key for key, dt in notified_events.items() if (now - dt) > timedelta(hours=12)]
     for key in to_delete:
         del notified_events[key]
