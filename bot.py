@@ -56,7 +56,7 @@ def check_and_notify():
                 last = notified_events.get(key)
                 return last is None or (now - last) > timedelta(minutes=cooldown)
 
-            # ======= 1. Notifica per salita prezzo
+            # ======= 1. Notifica per salita prezzo (solo sopra +4%)
             if price_change >= GROWTH_THRESHOLD_UP:
                 key = (symbol, 'price_up')
                 if can_notify(key):
@@ -69,7 +69,7 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # ======= 2. Notifica per discesa prezzo
+            # ======= 2. Notifica per discesa prezzo (solo sotto -2%)
             if price_change <= GROWTH_THRESHOLD_DOWN:
                 key = (symbol, 'price_down')
                 if can_notify(key):
