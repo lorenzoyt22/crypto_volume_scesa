@@ -10,7 +10,7 @@ GROWTH_THRESHOLD_DOWN = -0.02 # -2%
 VOLUME_INCREASE_THRESHOLD = 70.0  # +7000%
 TIMEFRAME = '5m'
 EXCHANGE = ccxt.coinbase()
-SYMBOLS = [  # (tagliato per brevità, incolla la tua lista completa qui)
+SYMBOLS = [
     'BTC-USD', 'ETH-USD', 'SOL-USD', 'PEPE-USD', 'DOGE-USD', 'TRX-USD'
 ]
 
@@ -82,17 +82,17 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # ======= 3. Notifica per volume alto solo se ±2% prezzo
-            if volume_change >= VOLUME_INCREASE_THRESHOLD and abs(price_diff_pct) >= 2.0:
-                key = (symbol, 'volume_up')
+            # ======= 3. Notifica combinata: prezzo ±2% e forte variazione di volume
+            if abs(price_change) >= 0.02 and abs(volume_change) >= VOLUME_INCREASE_THRESHOLD:
+                key = (symbol, 'price_volume_combo')
                 if can_notify(key):
-                    color = "🟢" if price_diff_pct > 0 else "🔴"
-                    direction = "📈" if price_diff_pct > 0 else "📉"
+                    color = "🟢" if price_change > 0 else "🔴"
+                    direction = "📈" if price_change > 0 else "📉"
                     msg = (
-                        f"{color}🔊 *{symbol} volume ↑ +{volume_change*100:.2f}% in 5 minuti*\n"
-                        f"{direction} *Prezzo prima aumento volume:* {prev_close:.4f} USD\n"
-                        f"{direction} *Prezzo attuale:* {last_close:.4f} USD\n"
-                        f"📊 *Differenza prezzo:* {price_diff_pct:+.2f}%\n"
+                        f"{color}🔊 *{symbol}: movimento di prezzo {price_diff_pct:+.2f}% "
+                        f"con forte variazione di volume*\n"
+                        f"{direction} *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
+                        f"📊 *Cambio volume:* {volume_change*100:+.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                     )
                     send_telegram_message(msg)
@@ -113,4 +113,4 @@ if __name__ == "__main__":
     while True:
         check_and_notify()
         clean_memory()
-        time.sleep(240)  # ogni 4 minuti
+        time.sleep(240)
