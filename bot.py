@@ -11,7 +11,7 @@ VOLUME_INCREASE_THRESHOLD = 70.0  # +7000%
 TIMEFRAME = '5m'
 EXCHANGE = ccxt.coinbase()
 SYMBOLS = [
-    'BTC-USD', 'ETH-USD', 'SOL-USD', 'PEPE-USD', 'DOGE-USD', 'TRX-USD'
+    'BTC-USD', 'ETH-USD', 'SOL-USD', 'PEPE-USD', 'DOGE-USD', 'TRX-USD', 'CVX-USD'
 ]
 
 # TELEGRAM CONFIG da variabili d'ambiente
@@ -44,7 +44,7 @@ def check_and_notify():
             if len(ohlcv) < 4:
                 continue
 
-            old_candle, prev_candle, last_candle = ohlcv[-4], ohlcv[-2], ohlcv[-1]
+            prev_candle, last_candle = ohlcv[-2], ohlcv[-1]
             prev_close, last_close = prev_candle[4], last_candle[4]
             prev_vol, last_vol = prev_candle[5], last_candle[5]
 
