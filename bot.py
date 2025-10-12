@@ -41,20 +41,7 @@ def check_and_notify():
     for symbol in SYMBOLS:
         try:
             ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=4)
-            if len(ohlcv) < 4:
-                continue
 
-            prev_candle, last_candle = ohlcv[-2], ohlcv[-1]
-            prev_close, last_close = prev_candle[4], last_candle[4]
-            prev_vol, last_vol = prev_candle[5], last_candle[5]
-
-            price_change = (last_close - prev_close) / prev_close if prev_close > 0 else 0
-            volume_change = (last_vol - prev_vol) / prev_vol if prev_vol > 0 else 0
-            price_diff_pct = price_change * 100
-
-            def can_notify(key, cooldown=60):
-                last = notified_events.get(key)
-                return last is None or (now - last) > timedelta(minutes=cooldown)
 
             # ======= 1. Notifica per salita prezzo (solo sopra +4%)
             if price_change >= GROWTH_THRESHOLD_UP:
