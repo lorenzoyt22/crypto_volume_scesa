@@ -23,8 +23,12 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 ALERTS_FILE = "alerts.json"
 TG_OFFSET_FILE = "tg_offset.txt"
 
-# Memoria notifiche inviate: { (symbol, tipo_evento) : datetime_ultimo_invio }
+# Memoria notifiche inviate: { (symbol, tipo_evento, extra) : datetime_ultimo_invio }
 notified_events = {}
+
+# Range alert
+MIN_ALERT_PRICE = 1e-8
+MAX_ALERT_PRICE = 1e12
 
 def load_alerts():
     if os.path.exists(ALERTS_FILE):
@@ -81,6 +85,22 @@ def fetch_price(symbol):
             return float(ohlcv[-1][4])
         raise
 
+def normalize_symbol_input(s):
+    s = s.upper().strip().replace('/', '-')
+    if '-' not in s:
+        s = s + '-USD'
+    return s
+
+def fmt_price(p):
+    p = float(p)
+    if p >= 1:
+        s = f"{p:.2f}"
+    elif p >= 0.0001:
+        s = f"{p:.6f}"
+    else:
+        s = f"{p:.8f}"
+    return s.rstrip('0').rstrip('.')
+
 def handle_telegram_commands():
     offset = read_tg_offset()
     params = {"timeout": 10}
@@ -103,38 +123,52 @@ def handle_telegram_commands():
             parts = text.split()
             cmd = parts[0].lower()
 
+            # /price SYMBOL   -> accept BTC / BTC-USD / BTC/USD
             if cmd == "/price" and len(parts) >= 2:
-                sym = parts[1].upper().replace('/', '-')
+                sym_input = normalize_symbol_input(parts[1])
                 try:
-                    price = fetch_price(sym)
-                    send_telegram_message(f"*{sym}* prezzo attuale: {price:.6f} USD")
+                    price = fetch_price(sym_input)
+                    send_telegram_message(f"*{sym_input}* prezzo attuale: {fmt_price(price)} USD")
                 except Exception as e:
-                    send_telegram_message(f"Errore fetching price {sym}: {e}")
+                    send_telegram_message(f"Errore fetching price {sym_input}: {e}")
 
+            # /alert SYMBOL PRICE  -> accept single symbol; only allow if in SYMBOLS
             elif cmd == "/alert" and len(parts) >= 3:
-                sym = parts[1].upper().replace('/', '-')
+                sym_input = normalize_symbol_input(parts[1])
                 try:
                     price_val = float(parts[2])
-                    alerts[sym] = price_val
+                    if not (MIN_ALERT_PRICE <= price_val <= MAX_ALERT_PRICE):
+                        send_telegram_message(f"❗ Valore alert non valido. Range: {MIN_ALERT_PRICE} - {MAX_ALERT_PRICE}")
+                        continue
+                    if sym_input not in SYMBOLS:
+                        send_telegram_message(f"❗ {sym_input} non è monitorato. Aggiungilo a SYMBOLS se vuoi.")
+                        continue
+                    alerts[sym_input] = price_val
                     save_alerts(alerts)
-                    send_telegram_message(f"Alert impostato: *{sym}* → {price_val:.6f} USD")
+                    send_telegram_message(f"✅🟢 *Alert impostato:* {sym_input} → {fmt_price(price_val)} USD  ↗")
                 except Exception as e:
                     send_telegram_message(f"Errore impostando alert: {e}")
 
+            # /removealert SYMBOL
             elif cmd == "/removealert" and len(parts) >= 2:
-                sym = parts[1].upper().replace('/', '-')
-                if sym in alerts:
-                    del alerts[sym]
+                sym_input = normalize_symbol_input(parts[1])
+                if sym_input in alerts:
+                    del alerts[sym_input]
                     save_alerts(alerts)
-                    send_telegram_message(f"Alert rimosso: *{sym}*")
+                    send_telegram_message(f"🗑️ *Alert rimosso:* {sym_input}")
+                    # rimuovo eventuali notifiche pregresse per quell'alert
+                    to_del = [k for k in notified_events.keys() if k[0] == sym_input and k[1].startswith('alert_')]
+                    for k in to_del:
+                        notified_events.pop(k, None)
                 else:
-                    send_telegram_message(f"Nessun alert trovato per *{sym}*")
+                    send_telegram_message(f"Nessun alert trovato per *{sym_input}*")
 
+            # /listalerts
             elif cmd == "/listalerts":
                 if not alerts:
                     send_telegram_message("Nessun alert impostato.")
                 else:
-                    lines = [f"*{s}*: {p:.6f} USD" for s, p in alerts.items()]
+                    lines = [f"*{s}*: {fmt_price(p)} USD" for s, p in alerts.items()]
                     send_telegram_message("Alert impostati:\n" + "\n".join(lines))
 
             else:
@@ -154,8 +188,8 @@ def check_and_notify():
     now = datetime.now(timezone.utc)
     for symbol in SYMBOLS:
         try:
-            sym = symbol.replace('-', '/')
-            ohlcv = EXCHANGE.fetch_ohlcv(sym, timeframe=TIMEFRAME, limit=2)
+            sym_ccxt = symbol.replace('-', '/')
+            ohlcv = EXCHANGE.fetch_ohlcv(sym_ccxt, timeframe=TIMEFRAME, limit=2)
             if len(ohlcv) < 2:
                 continue
             last = ohlcv[-1]
@@ -165,23 +199,57 @@ def check_and_notify():
             price_change = (last_close - prev_close) / prev_close if prev_close != 0 else 0.0
             price_diff_pct = price_change * 100.0
 
-            alert_info = ""
+            # 0) alert raggiunto rispetto al price impostato (trigger immediato)
             if symbol in alerts:
                 alert_price = float(alerts[symbol])
-                diff = last_close - alert_price
-                diff_pct = (diff / alert_price * 100.0) if alert_price != 0 else 0.0
-                sign = "+" if diff >= 0 else "-"
-                alert_info = (
-                    f"\n\n⚠️ *Alert impostato:* {alert_price:.6f} USD\n"
-                    f"   *Scarto:* {sign}{abs(diff):.6f} USD ({sign}{abs(diff_pct):.2f}%)"
-                )
+                # crossing upward
+                if last_close >= alert_price and prev_close < alert_price:
+                    key = (symbol, f"alert_hit_{alert_price}")
+                    if can_notify(key):
+                        diff = last_close - alert_price
+                        diff_pct = (diff / alert_price * 100.0) if alert_price != 0 else 0.0
+                        msg = (
+                            f"✅🟢 *ALERT RAGGIUNTO* {symbol}\n"
+                            f"⚠️ *Alert impostato:* {fmt_price(alert_price)} USD\n"
+                            f"💵 *Prezzo:* {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n"
+                            f"   *Scarto:* +{fmt_price(diff)} USD (+{diff_pct:.2f}%)\n"
+                            f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        )
+                        send_telegram_message(msg)
+                        notified_events[key] = now
+                # crossing downward (se vuoi notificare anche caduta sotto alert)
+                elif last_close <= alert_price and prev_close > alert_price:
+                    key = (symbol, f"alert_hit_{alert_price}")
+                    if can_notify(key):
+                        diff = last_close - alert_price
+                        diff_pct = (diff / alert_price * 100.0) if alert_price != 0 else 0.0
+                        msg = (
+                            f"🔔🔻 *ALERT RAGGIUNTO (sotto)* {symbol}\n"
+                            f"⚠️ *Alert impostato:* {fmt_price(alert_price)} USD\n"
+                            f"💵 *Prezzo:* {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n"
+                            f"   *Scarto:* {fmt_price(diff)} USD ({diff_pct:.2f}%)\n"
+                            f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        )
+                        send_telegram_message(msg)
+                        notified_events[key] = now
 
+            # 1) salita prezzo > soglia
             if price_change >= GROWTH_THRESHOLD_UP:
                 key = (symbol, 'price_up')
                 if can_notify(key):
+                    alert_info = ""
+                    if symbol in alerts:
+                        alert_price = float(alerts[symbol])
+                        diff = last_close - alert_price
+                        diff_pct = (diff / alert_price * 100.0) if alert_price != 0 else 0.0
+                        sign = "+" if diff >= 0 else "-"
+                        alert_info = (
+                            f"\n\n⚠️ *Alert impostato:* {fmt_price(alert_price)} USD\n"
+                            f"   *Scarto:* {sign}{fmt_price(abs(diff))} USD ({sign}{abs(diff_pct):.2f}%)"
+                        )
                     msg = (
                         f"🟢📈 *{symbol} è salita del +{price_diff_pct:.2f}% in 5 minuti*\n"
-                        f"💵 *Prezzo:* {prev_close:.6f} → {last_close:.6f} USD\n"
+                        f"💵 *Prezzo:* {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n"
                         f"📊 *Differenza prezzo:* +{price_diff_pct:.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                         + alert_info
@@ -189,12 +257,23 @@ def check_and_notify():
                     send_telegram_message(msg)
                     notified_events[key] = now
 
+            # 2) discesa prezzo <= soglia
             if price_change <= GROWTH_THRESHOLD_DOWN:
                 key = (symbol, 'price_down')
                 if can_notify(key):
+                    alert_info = ""
+                    if symbol in alerts:
+                        alert_price = float(alerts[symbol])
+                        diff = last_close - alert_price
+                        diff_pct = (diff / alert_price * 100.0) if alert_price != 0 else 0.0
+                        sign = "+" if diff >= 0 else "-"
+                        alert_info = (
+                            f"\n\n⚠️ *Alert impostato:* {fmt_price(alert_price)} USD\n"
+                            f"   *Scarto:* {sign}{fmt_price(abs(diff))} USD ({sign}{abs(diff_pct):.2f}%)"
+                        )
                     msg = (
                         f"🔴📉 *{symbol} è scesa del -{abs(price_diff_pct):.2f}% in 5 minuti*\n"
-                        f"💵 *Prezzo:* {prev_close:.6f} → {last_close:.6f} USD\n"
+                        f"💵 *Prezzo:* {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n"
                         f"📊 *Differenza prezzo:* -{abs(price_diff_pct):.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
                         + alert_info
