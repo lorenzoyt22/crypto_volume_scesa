@@ -2,14 +2,15 @@ import ccxt
 import os
 import time
 import requests
+import json
 from datetime import datetime, timedelta, timezone
 
 # CONFIG
 GROWTH_THRESHOLD_UP = 0.04    # +4%
 GROWTH_THRESHOLD_DOWN = -0.02 # -2%
-VOLUME_INCREASE_THRESHOLD = 70.0  # +7000%
+VOLUME_INCREASE_THRESHOLD = 70.0  # soglia percentuale (es. 70 -> 70%)
 TIMEFRAME = '5m'
-EXCHANGE = ccxt.coinbase()
+EXCHANGE = ccxt.coinbase()  # attenzione al formato simboli
 SYMBOLS = [
     'BTC-USD', 'ETH-USD', 'SOL-USD', 'PEPE-USD', 'DOGE-USD', 'TRX-USD', 'CVX-USD'
 ]
@@ -17,60 +18,207 @@ SYMBOLS = [
 # TELEGRAM CONFIG da variabili d'ambiente
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+# Persistenza alerts e offset
+ALERTS_FILE = "alerts.json"
+TG_OFFSET_FILE = "tg_offset.txt"
 
 # Memoria notifiche inviate: { (symbol, tipo_evento) : datetime_ultimo_invio }
 notified_events = {}
 
+def load_alerts():
+    if os.path.exists(ALERTS_FILE):
+        with open(ALERTS_FILE, "r") as f:
+            return json.load(f)
+    return {}  # { "BTC-USD": 118000.0, ... }
+
+def save_alerts(alerts):
+    with open(ALERTS_FILE, "w") as f:
+        json.dump(alerts, f)
+
+alerts = load_alerts()
+
+def read_tg_offset():
+    if os.path.exists(TG_OFFSET_FILE):
+        with open(TG_OFFSET_FILE, "r") as f:
+            try:
+                return int(f.read().strip())
+            except:
+                return None
+    return None
+
+def write_tg_offset(offset):
+    with open(TG_OFFSET_FILE, "w") as f:
+        f.write(str(offset))
+
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"{TELEGRAM_API}/sendMessage"
     data = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url, data=data, timeout=10)
-        response.raise_for_status()
+        resp = requests.post(url, data=data, timeout=10)
+        resp.raise_for_status()
     except Exception as e:
         print(f"Errore invio Telegram: {e}")
 
-def check_and_notify():
-    global notified_events
-    now = datetime.now(timezone.utc)
+def can_notify(key, hours=12):
+    dt = notified_events.get(key)
+    if dt is None:
+        return True
+    return (datetime.now(timezone.utc) - dt) > timedelta(hours=hours)
 
+def fetch_price(symbol):
+    # ccxt expects 'BTC/USD' style
+    sym = symbol.replace('-', '/')
+    try:
+        ticker = EXCHANGE.fetch_ticker(sym)
+        return float(ticker.get('last') or ticker.get('close') or 0.0)
+    except Exception as e:
+        # fallback su ohlcv
+        try:
+            ohlcv = EXCHANGE.fetch_ohlcv(sym, timeframe=TIMEFRAME, limit=1)
+            if ohlcv:
+                return float(ohlcv[-1][4])
+        except:
+            pass
+        raise
+
+def handle_telegram_commands():
+    offset = read_tg_offset()
+    params = {"timeout": 10}
+    if offset:
+        params["offset"] = offset
+    try:
+        resp = requests.get(f"{TELEGRAM_API}/getUpdates", params=params, timeout=15)
+        resp.raise_for_status()
+        updates = resp.json().get("result", [])
+        for u in updates:
+            update_id = u["update_id"]
+            if update_id is not None:
+                write_tg_offset(update_id + 1)
+            msg = u.get("message") or u.get("edited_message")
+            if not msg:
+                continue
+            chat_id = msg["chat"]["id"]
+            text = msg.get("text", "").strip()
+            if not text:
+                continue
+            parts = text.split()
+            cmd = parts[0].lower()
+            # /price SYMBOL
+            if cmd == "/price" and len(parts) >= 2:
+                sym = parts[1].upper().replace('/', '-')
+                try:
+                    price = fetch_price(sym)
+                    send_telegram_message(f"*{sym}* prezzo attuale: {price:.6f} USD")
+                except Exception as e:
+                    send_telegram_message(f"Errore fetching price {sym}: {e}")
+            # /alert SYMBOL PRICE
+            elif cmd == "/alert" and len(parts) >= 3:
+                sym = parts[1].upper().replace('/', '-')
+                try:
+                    price_val = float(parts[2])
+                    alerts[sym] = price_val
+                    save_alerts(alerts)
+                    send_telegram_message(f"Alert impostato: *{sym}* → {price_val:.6f} USD")
+                except Exception as e:
+                    send_telegram_message(f"Errore impostando alert: {e}")
+            # /removealert SYMBOL
+            elif cmd == "/removealert" and len(parts) >= 2:
+                sym = parts[1].upper().replace('/', '-')
+                if sym in alerts:
+                    del alerts[sym]
+                    save_alerts(alerts)
+                    send_telegram_message(f"Alert rimosso: *{sym}*")
+                else:
+                    send_telegram_message(f"Nessun alert trovato per *{sym}*")
+            # /listalerts
+            elif cmd == "/listalerts":
+                if not alerts:
+                    send_telegram_message("Nessun alert impostato.")
+                else:
+                    lines = [f"*{s}*: {p:.6f} USD" for s, p in alerts.items()]
+                    send_telegram_message("Alert impostati:\n" + "\n".join(lines))
+            # otherwise ignore or acknowledge
+            else:
+                # breve help
+                help_msg = (
+                    "Comandi:\n"
+                    "/price SYMBOL\n"
+                    "/alert SYMBOL PRICE\n"
+                    "/removealert SYMBOL\n"
+                    "/listalerts"
+                )
+                send_telegram_message(help_msg)
+    except Exception as e:
+        print(f"Errore handle_telegram_commands: {e}")
+
+def check_and_notify():
+    global notified_events, alerts
+    now = datetime.now(timezone.utc)
     for symbol in SYMBOLS:
         try:
-            ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=4)
+            sym = symbol.replace('-', '/')
+            ohlcv = EXCHANGE.fetch_ohlcv(sym, timeframe=TIMEFRAME, limit=4)
+            if len(ohlcv) < 2:
+                continue
+            last = ohlcv[-1]
+            prev = ohlcv[-2]
+            last_close = float(last[4])
+            prev_close = float(prev[4])
+            price_change = (last_close - prev_close) / prev_close if prev_close != 0 else 0.0
+            price_diff_pct = price_change * 100.0
 
+            last_vol = float(last[5] or 0.0)
+            prev_vol = float(prev[5] or 0.0)
+            volume_change_pct = ((last_vol - prev_vol) / prev_vol * 100.0) if prev_vol > 0 else 0.0
 
-            # ======= 1. Notifica per salita prezzo (solo sopra +4%)
+            # include alert info if presente
+            alert_info = ""
+            if symbol in alerts:
+                alert_price = float(alerts[symbol])
+                diff = last_close - alert_price
+                diff_pct = (diff / alert_price * 100.0) if alert_price != 0 else 0.0
+                sign = "+" if diff >= 0 else "-"
+                alert_info = (
+                    f"\n\n⚠️ *Alert impostato:* {alert_price:.6f} USD\n"
+                    f"   *Scarto:* {sign}{abs(diff):.6f} USD ({sign}{abs(diff_pct):.2f}%)"
+                )
+
+            # 1. salita prezzo > soglia
             if price_change >= GROWTH_THRESHOLD_UP:
                 key = (symbol, 'price_up')
                 if can_notify(key):
                     msg = (
-                        f"🟢🟢🟢🟢📈 *{symbol} è salita del +{price_diff_pct:.2f}% in 5 minuti*\n"
-                        f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
+                        f"🟢📈 *{symbol} è salita del +{price_diff_pct:.2f}% in 5 minuti*\n"
+                        f"💵 *Prezzo:* {prev_close:.6f} → {last_close:.6f} USD\n"
                         f"📊 *Differenza prezzo:* +{price_diff_pct:.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        + alert_info
                     )
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # ======= 2. Notifica per discesa prezzo (solo sotto -2%)
+            # 2. discesa prezzo <= soglia
             if price_change <= GROWTH_THRESHOLD_DOWN:
                 key = (symbol, 'price_down')
                 if can_notify(key):
                     msg = (
-                        f"🔴🔴🔴🔴📉 *{symbol} è scesa del -{abs(price_diff_pct):.2f}% in 5 minuti*\n"
-                        f"💵 *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
+                        f"🔴📉 *{symbol} è scesa del -{abs(price_diff_pct):.2f}% in 5 minuti*\n"
+                        f"💵 *Prezzo:* {prev_close:.6f} → {last_close:.6f} USD\n"
                         f"📊 *Differenza prezzo:* -{abs(price_diff_pct):.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        + alert_info
                     )
                     send_telegram_message(msg)
                     notified_events[key] = now
 
-            # ======= 3. Notifica combinata: prezzo ±2% e forte variazione di volume
-            if abs(price_change) >= 0.02 and abs(volume_change) >= VOLUME_INCREASE_THRESHOLD:
+            # 3. combinata prezzo ±2% e variazione volume forte
+            if abs(price_change) >= 0.02 and abs(volume_change_pct) >= VOLUME_INCREASE_THRESHOLD:
                 key = (symbol, 'price_volume_combo')
                 if can_notify(key):
                     color = "🟢" if price_change > 0 else "🔴"
@@ -78,9 +226,10 @@ def check_and_notify():
                     msg = (
                         f"{color}🔊 *{symbol}: movimento di prezzo {price_diff_pct:+.2f}% "
                         f"con forte variazione di volume*\n"
-                        f"{direction} *Prezzo:* {prev_close:.4f} → {last_close:.4f} USD\n"
-                        f"📊 *Cambio volume:* {volume_change*100:+.2f}%\n"
+                        f"{direction} *Prezzo:* {prev_close:.6f} → {last_close:.6f} USD\n"
+                        f"📊 *Cambio volume:* {volume_change_pct:+.2f}%\n"
                         f"🕒 *Orario:* {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        + alert_info
                     )
                     send_telegram_message(msg)
                     notified_events[key] = now
@@ -89,7 +238,6 @@ def check_and_notify():
             print(f"Errore con {symbol}: {e}")
 
 def clean_memory():
-    """Pulisce la memoria notifiche più vecchie di 12 ore"""
     now = datetime.now(timezone.utc)
     to_delete = [key for key, dt in notified_events.items() if (now - dt) > timedelta(hours=12)]
     for key in to_delete:
@@ -97,7 +245,12 @@ def clean_memory():
 
 if __name__ == "__main__":
     print("Bot crypto monitor avviato...")
+    # loop principale
     while True:
-        check_and_notify()
-        clean_memory()
+        try:
+            handle_telegram_commands()
+            check_and_notify()
+            clean_memory()
+        except Exception as e:
+            print(f"Errore main loop: {e}")
         time.sleep(240)
