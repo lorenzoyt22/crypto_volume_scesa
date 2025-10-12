@@ -25,8 +25,8 @@ USERS_FILE = "users.json"
 
 # ===== MEMORIE =====
 alerts = {}
-notified_events = {}
-user_status = {}  # username -> {valid, expires, chat_id}
+notified_events = {}  # {(symbol, tipo): datetime_ultimo_alert}
+user_status = {}      # username -> {valid, expires, chat_id}
 
 # ===== FUNZIONI UTILI =====
 def fmt_price(p):
@@ -109,27 +109,47 @@ def load_alerts():
 def save_alerts():
     save_json(ALERT_FILE, alerts)
 
+def can_notify(key):
+    """Evita notifiche duplicate entro 12 ore"""
+    now = datetime.now(timezone.utc)
+    last = notified_events.get(key)
+    if last and (now - last) < timedelta(hours=12):
+        return False
+    return True
+
 def check_and_notify():
     global notified_events
     now = datetime.now(timezone.utc)
-    for symbol, alert_price in list(alerts.items()):
-        try:
-            ticker = EXCHANGE.fetch_ticker(symbol)
-            current_price = ticker["last"]
 
-            key = (symbol, "alert")
-            if key not in notified_events and (
-                (alert_price >= 0 and current_price >= alert_price) or
-                (alert_price < 0 and current_price <= abs(alert_price))
-            ):
-                send_telegram_message(
-                    f"✅🟢 *ALERT RAGGIUNTO* {symbol}\n"
-                    f"⚠️ Alert: {fmt_price(alert_price)} USD\n"
-                    f"💵 Prezzo: {fmt_price(current_price)} USD\n"
-                    f"📊 Scarto: {fmt_price(current_price - alert_price)} USD\n"
-                    f"🕒 {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                )
-                notified_events[key] = now
+    for symbol in SYMBOLS:
+        try:
+            ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=2)
+            if len(ohlcv) < 2:
+                continue
+            prev_close, last_close = float(ohlcv[-2][4]), float(ohlcv[-1][4])
+            price_change = (last_close - prev_close) / prev_close
+
+            # Notifica rialzo
+            if price_change >= GROWTH_THRESHOLD_UP and can_notify((symbol, "up")):
+                msg = f"🟢 *{symbol} +{price_change*100:.2f}% in 5 min*\n💵 {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n🕒 {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                send_telegram_message(msg)
+                notified_events[(symbol, "up")] = now
+
+            # Notifica ribasso
+            if price_change <= GROWTH_THRESHOLD_DOWN and can_notify((symbol, "down")):
+                msg = f"🔴 *{symbol} {price_change*100:.2f}% in 5 min*\n💵 {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n🕒 {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                send_telegram_message(msg)
+                notified_events[(symbol, "down")] = now
+
+            # Alert manuale impostato dall'utente
+            for sym, alert_price in list(alerts.items()):
+                key = (sym, "alert")
+                if key not in notified_events:
+                    if (alert_price >= 0 and last_close >= alert_price) or (alert_price < 0 and last_close <= abs(alert_price)):
+                        msg = f"✅🟢 *ALERT RAGGIUNTO* {sym}\n⚠️ Alert: {fmt_price(alert_price)} USD\n💵 Prezzo: {fmt_price(last_close)} USD\n📊 Scarto: {fmt_price(last_close - alert_price)} USD\n🕒 {now.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        send_telegram_message(msg)
+                        notified_events[key] = now
+
         except Exception as e:
             print(f"Errore fetch {symbol}: {e}")
 
@@ -141,17 +161,11 @@ def process_message(username, chat_id, text):
 
     cmd = parts[0].lower()
     if cmd == "/help":
-        send_telegram_message(
-            f"❌ Abbonamento scaduto o non registrato.\nPer assistenza contattare {ADMIN_USERNAME}",
-            chat_id=chat_id
-        )
+        send_telegram_message(f"❌ Abbonamento scaduto o non registrato.\nPer assistenza contattare {ADMIN_USERNAME}", chat_id)
         return
 
     if not check_user_valid(username):
-        send_telegram_message(
-            f"❌ Abbonamento scaduto o non registrato.\nPer assistenza contattare {ADMIN_USERNAME}",
-            chat_id=chat_id
-        )
+        send_telegram_message(f"❌ Abbonamento scaduto o non registrato.\nPer assistenza contattare {ADMIN_USERNAME}", chat_id)
         return
 
     if cmd == "/price" and len(parts) >= 2:
@@ -172,7 +186,7 @@ def process_message(username, chat_id, text):
                 return
             alerts[sym] = price_val
             save_alerts()
-            send_telegram_message(f"✅🟢 Alert impostato: {sym} → {fmt_price(price_val)} USD ↗", chat_id)
+            send_telegram_message(f"✅ Alert impostato: {sym} → {fmt_price(price_val)} USD", chat_id)
         except Exception as e:
             send_telegram_message(f"Errore impostando alert: {e}", chat_id)
 
@@ -206,7 +220,7 @@ def get_updates(offset=None):
         print("Errore getUpdates:", e)
     return {}
 
-# ===== MAIN LOOP =====
+# ===== POLLING TELEGRAM =====
 def telegram_polling():
     update_id = None
     while True:
@@ -220,13 +234,13 @@ def telegram_polling():
                 username = message.get("from", {}).get("username", "")
 
                 if text and username:
-                    # memorizza chat_id dell'utente
                     if username in user_status:
                         user_status[username]["chat_id"] = chat_id
                     process_message(username, chat_id, text)
         time.sleep(1)
 
-def price_checker():
+# ===== LOOP PRINCIPALE =====
+def main_loop():
     while True:
         check_and_notify()
         update_user_status()
@@ -238,4 +252,4 @@ if __name__ == "__main__":
     load_alerts()
     print("Bot avviato (senza notifiche volume)...")
     Thread(target=telegram_polling, daemon=True).start()
-    price_checker()
+    main_loop()
