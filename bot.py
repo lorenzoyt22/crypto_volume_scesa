@@ -28,22 +28,43 @@ def get_threshold(symbol):
         return 0.04   # 4% — small/micro cap
 
 EXCHANGE = ccxt.coinbase()
-SYMBOLS = ['AUCTION-USD', 'RLC-USD', 'TAIKO-USD', 'BAL-USD', 'POND-USD', 'CHILLGUY-USD', 'ABT-USD', 'AGLD-USD', 'NMR-USD', 'OCEAN-USD', 'CTSI-USD', 'AERGO-USD', 'MAGIC-USD',
-           'PRO-USD', 'DIA-USD', 'C98-USD', 'ACS-USD', 'CAT-USD', 'TAI-USD', 'CELR-USD', 'HFT-USD', 'TNSR-USD', 'GODS-USD', 'RARE-USD', 'FORT-USD', 'BOBA-USD', 'FWOG-USD', 'TOKEN-USD',
-           'STORJ-USD', 'TRU-USD', 'NCT-USD', 'OGN-USD', 'OXT-USD', 'MIGGLES-USD', 'RAD-USD', 'LOKA-USD', 'REZ-USD', 'PNG-USD', 'LMWR-USD', 'GTC-USD', 'CLV-USD', 'SD-USD', 'SWELL-USD',
-           'DYDX-USD', 'PYR-USD', 'WEN-USD', 'GME-USD', 'MLN-USD', 'GHST-USD', 'ARPA-USD', 'NKN-USD', 'BADGER-USD', 'ALCX-USD', 'IDEX-USD', 'ASM-USD', 'HOPR-USD', 'FARM-USD', 'MATH-USD',
-           'POLS-USD', 'BENJI-USD', 'RARI-USD', 'BLZ-USD', 'FIS-USD', 'SUKU-USD', 'VINU-USD', 'AVT-USD', 'VOXEL-USD', 'MDT-USD', 'AST-USD', 'FX-USD', 'GST-USD', 'BTRST-USD', 'HIGH-USD',
-           'PLA-USD', 'SHPING-USD', 'MKR-USD', 'BTC-USD', 'ETH-USD', 'XRP-USD', 'BNB-USD', 'SOL-USD', 'DOGE-USD', 'TRX-USD', 'ADA-USD', 'XLM-USD', 'SUI-USD', 'LINK-USD',
-           'HBAR-USD', 'BCH-USD', 'AVAX-USD', 'SHIB-USD', 'TON-USD', 'LTC-USD', 'DOT-USD', 'UNI-USD', 'PEPE-USD', 'AAVE-USD', 'CRO-USD', 'APT-USD', 'NEAR-USD', 'ICP-USD', 'ONDO-USD', 'ETC-USD',
-           'ALGO-USD', 'ENA-USD', 'ATOM-USD', 'VET-USD', 'POL-USD', 'ARB-USD', 'BONK-USD', 'RENDER-USD', 'TRUMP-USD', 'PENGU-USD', 'FET-USD', 'WLD-USD', 'SEI-USD', 'FIL-USD', 'QNT-USD', 'JUP-USD',
-           'SPX-USD', 'TIA-USD', 'INJ-USD', 'STX-USD', 'FLR-USD', 'OP-USD', 'IMX-USD', 'WIF-USD', 'GRT-USD', 'FLOKI-USD', 'CRV-USD', 'MSOL-USD', 'GALA-USD', 'JASMY-USD', 'MOG-USD', 'LDO-USD', 'ENS-USD',
-           'AERO-USD', 'PYTH-USD', 'XTZ-USD', 'JTO-USD', 'FLOW-USD', 'MANA-USD', 'MORPHO-USD', 'XCN-USD', 'HNT-USD', 'APE-USD', 'RLUSD-USD', 'STRK-USD', 'RSR-USD', 'KAVA-USD', 'EGLD-USD', '1INCH-USD',
-           'COMP-USD', 'AIOZ-USD', 'EIGEN-USD', 'AXS-USD', 'CHZ-USD', 'EOS-USD', 'KAITO-USD', 'AKT-USD', 'POPCAT-USD', 'WAXL-USD', 'SUPER-USD', 'MATIC-USD', 'CTC-USD', 'AMP-USD', 'ATH-USD',
-           'TURBO-USD', 'SAFE-USD', 'MEW-USD', 'LPT-USD', 'CVX-USD', 'DASH-USD', 'PNUT-USD', 'GLM-USD', 'MINA-USD', 'KSM-USD', 'ARKM-USD', 'ZRO-USD', 'BERA-USD', 'TOSHI-USD', 'SNX-USD', 'BAT-USD', 'ZRX-USD',
-           'BLUR-USD', 'ROSE-USD', 'IOTX-USD', 'NEIRO-USD', 'VTHO-USD', 'YFI-USD', 'CELO-USD', 'GIGA-USD', 'MOODENG-USD', 'COW-USD', 'TRAC-USD', 'ANKR-USD', 'WOO-USD', 'GMT-USD', 'IO-USD',
-           'SUSHI-USD', 'MASK-USD', 'PRIME-USD', 'XYO-USD', 'ZEN-USD', 'OSMO-USD', 'MELANIA-USD', 'RPL-USD', 'ME-USD', 'COTI-USD', 'SKL-USD', 'ILV-USD', 'BIGTIME-USD', 'METIS-USD', 'SWFTC-USD', 'REQ-USD',
-           'OMNI-USD', 'BAND-USD', 'ACH-USD', 'LQTY-USD', 'UMA-USD', 'BICO-USD', 'COOKIE-USD', 'LRC-USD', 'DEGEN-USD', 'POWR-USD', 'API3-USD', 'KNC-USD', 'AUDIO-USD', 'SPELL-USD',
-           'ACX-USD', 'CVC-USD', 'FIDA-USD', 'PONKE-USD', 'BNT-USD']
+
+# Tutte le cripto monitorate — allineato con Revolut X (quelle con volume su Coinbase)
+# Revolut X supporta ~400+ token; quelli non presenti qui hanno volume troppo basso o non sono su Coinbase
+SYMBOLS = [
+    # --- Small/micro cap (soglia 4%) ---
+    'AUCTION-USD', 'RLC-USD', 'TAIKO-USD', 'BAL-USD', 'POND-USD', 'CHILLGUY-USD', 'ABT-USD', 'AGLD-USD', 'NMR-USD', 'OCEAN-USD',
+    'CTSI-USD', 'AERGO-USD', 'MAGIC-USD', 'PRO-USD', 'DIA-USD', 'C98-USD', 'ACS-USD', 'CAT-USD', 'TAI-USD', 'CELR-USD',
+    'HFT-USD', 'TNSR-USD', 'GODS-USD', 'RARE-USD', 'FORT-USD', 'BOBA-USD', 'FWOG-USD', 'TOKEN-USD',
+    'STORJ-USD', 'TRU-USD', 'NCT-USD', 'OGN-USD', 'OXT-USD', 'MIGGLES-USD', 'RAD-USD', 'LOKA-USD', 'REZ-USD', 'PNG-USD',
+    'LMWR-USD', 'GTC-USD', 'CLV-USD', 'SD-USD', 'SWELL-USD', 'DYDX-USD', 'PYR-USD', 'WEN-USD', 'GME-USD', 'MLN-USD',
+    'GHST-USD', 'ARPA-USD', 'NKN-USD', 'BADGER-USD', 'ALCX-USD', 'IDEX-USD', 'ASM-USD', 'HOPR-USD', 'FARM-USD', 'MATH-USD',
+    'POLS-USD', 'BENJI-USD', 'RARI-USD', 'BLZ-USD', 'FIS-USD', 'SUKU-USD', 'VINU-USD', 'AVT-USD', 'VOXEL-USD', 'MDT-USD',
+    'AST-USD', 'FX-USD', 'GST-USD', 'BTRST-USD', 'HIGH-USD', 'PLA-USD', 'SHPING-USD',
+    'SAND-USD', 'ENJ-USD',   # Revolut X — gaming/NFT con buon volume su Coinbase
+    # --- Mid cap (soglia 3%) ---
+    'MKR-USD', 'AVAX-USD', 'LINK-USD', 'DOT-USD', 'UNI-USD', 'PEPE-USD', 'AAVE-USD', 'CRO-USD', 'APT-USD', 'NEAR-USD',
+    'ICP-USD', 'ONDO-USD', 'ETC-USD', 'ALGO-USD', 'ENA-USD', 'ATOM-USD', 'VET-USD', 'POL-USD', 'ARB-USD', 'BONK-USD',
+    'RENDER-USD', 'TRUMP-USD', 'PENGU-USD', 'FET-USD', 'WLD-USD', 'SEI-USD', 'FIL-USD', 'QNT-USD', 'JUP-USD',
+    'SPX-USD', 'TIA-USD', 'INJ-USD', 'STX-USD', 'FLR-USD', 'OP-USD', 'IMX-USD', 'WIF-USD', 'GRT-USD', 'FLOKI-USD',
+    'CRV-USD', 'MSOL-USD', 'GALA-USD', 'JASMY-USD', 'MOG-USD', 'LDO-USD', 'ENS-USD',
+    'AERO-USD', 'PYTH-USD', 'XTZ-USD', 'JTO-USD', 'FLOW-USD', 'MANA-USD', 'MORPHO-USD', 'XCN-USD', 'HNT-USD', 'APE-USD',
+    'RLUSD-USD', 'STRK-USD', 'RSR-USD', 'KAVA-USD', 'EGLD-USD', '1INCH-USD',
+    'COMP-USD', 'AIOZ-USD', 'EIGEN-USD', 'AXS-USD', 'CHZ-USD', 'EOS-USD', 'KAITO-USD', 'AKT-USD', 'POPCAT-USD',
+    'WAXL-USD', 'SUPER-USD', 'MATIC-USD', 'CTC-USD', 'AMP-USD', 'ATH-USD',
+    'TURBO-USD', 'SAFE-USD', 'MEW-USD', 'LPT-USD', 'CVX-USD', 'DASH-USD', 'PNUT-USD', 'GLM-USD', 'MINA-USD', 'KSM-USD',
+    'ARKM-USD', 'ZRO-USD', 'BERA-USD', 'TOSHI-USD', 'SNX-USD', 'BAT-USD', 'ZRX-USD',
+    'BLUR-USD', 'ROSE-USD', 'IOTX-USD', 'NEIRO-USD', 'VTHO-USD', 'YFI-USD', 'CELO-USD', 'GIGA-USD', 'MOODENG-USD',
+    'COW-USD', 'TRAC-USD', 'ANKR-USD', 'WOO-USD', 'GMT-USD', 'IO-USD',
+    'SUSHI-USD', 'MASK-USD', 'PRIME-USD', 'XYO-USD', 'ZEN-USD', 'OSMO-USD', 'MELANIA-USD', 'RPL-USD', 'ME-USD',
+    'COTI-USD', 'SKL-USD', 'ILV-USD', 'BIGTIME-USD', 'METIS-USD', 'SWFTC-USD', 'REQ-USD',
+    'OMNI-USD', 'BAND-USD', 'ACH-USD', 'LQTY-USD', 'UMA-USD', 'BICO-USD', 'COOKIE-USD', 'LRC-USD', 'DEGEN-USD',
+    'POWR-USD', 'API3-USD', 'KNC-USD', 'AUDIO-USD', 'SPELL-USD',
+    'ACX-USD', 'CVC-USD', 'FIDA-USD', 'PONKE-USD', 'BNT-USD',
+    # --- Large cap (soglia 1%) ---
+    'BTC-USD', 'ETH-USD', 'XRP-USD', 'BNB-USD', 'SOL-USD', 'DOGE-USD', 'TRX-USD', 'ADA-USD',
+    'XLM-USD', 'SUI-USD', 'HBAR-USD', 'BCH-USD', 'SHIB-USD', 'TON-USD', 'LTC-USD',
+]
 
 # ===== TELEGRAM =====
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
@@ -107,9 +128,9 @@ def check_and_notify():
                 key = (symbol, "up")
                 if can_notify(key):
                     label = "large cap" if symbol in LARGE_CAPS else ("mid cap" if symbol in MID_CAPS else "small cap")
-                    msg = (f"🟢 *{symbol}* +{change*100:.2f}% in 5 min [{label}]\n"
-                           f"💵 {fmt_price(prev_close)} → {fmt_price(last_close)} USD\n"
-                           f"🕒 {now.strftime('%H:%M')} UTC")
+                    msg = (f"\U0001f7e2 *{symbol}* +{change*100:.2f}% in 5 min [{label}]\n"
+                           f"\U0001f4b5 {fmt_price(prev_close)} \u2192 {fmt_price(last_close)} USD\n"
+                           f"\U0001f552 {now.strftime('%H:%M')} UTC")
                     send_telegram(msg)
                     notified_events[key] = now
         except Exception as e:
@@ -126,35 +147,35 @@ def handle_command(chat_id, text):
     if cmd in ("/fine", "/stop", "/pausa"):
         bot_active = False
         send_telegram(
-            "⏸ *Bot in pausa.*\n"
-            "Non riceverai più notifiche finché non scrivi /inizia o /ricomincia.",
+            "\u23f8 *Bot in pausa.*\n"
+            "Non riceverai pi\u00f9 notifiche finch\u00e9 non scrivi /inizia o /ricomincia.",
             chat_id
         )
 
     elif cmd in ("/inizia", "/ricomincia", "/start"):
         bot_active = True
-        send_telegram("▶️ *Bot riattivato!* Riprendo il monitoraggio crypto.", chat_id)
+        send_telegram("\u25b6\ufe0f *Bot riattivato!* Riprendo il monitoraggio crypto.", chat_id)
 
     elif cmd == "/status":
-        stato = "▶️ *Attivo* — sto monitorando tutte le crypto" if bot_active else "⏸ *In pausa* — scrivi /inizia per riattivarlo"
+        stato = "\u25b6\ufe0f *Attivo* \u2014 sto monitorando tutte le crypto" if bot_active else "\u23f8 *In pausa* \u2014 scrivi /inizia per riattivarlo"
         send_telegram(f"Stato bot: {stato}", chat_id)
 
     elif cmd == "/price" and len(parts) >= 2:
         sym = normalize_symbol(parts[1])
         try:
             ticker = EXCHANGE.fetch_ticker(sym)
-            send_telegram(f"💰 *{sym}* → {fmt_price(ticker['last'])} USD", chat_id)
+            send_telegram(f"\U0001f4b0 *{sym}* \u2192 {fmt_price(ticker['last'])} USD", chat_id)
         except Exception as e:
             send_telegram(f"Errore prezzo {sym}: {e}", chat_id)
 
     elif cmd == "/help":
         send_telegram(
-            "📖 *Comandi disponibili:*\n"
-            "/fine — metti il bot in pausa (nessuna notifica)\n"
-            "/inizia — riattiva il bot\n"
-            "/status — vedi stato attuale del bot\n"
-            "/price BTC — prezzo attuale di una cripto\n"
-            "/help — questo messaggio",
+            "\U0001f4d6 *Comandi disponibili:*\n"
+            "/fine \u2014 metti il bot in pausa (nessuna notifica)\n"
+            "/inizia \u2014 riattiva il bot\n"
+            "/status \u2014 vedi stato attuale del bot\n"
+            "/price BTC \u2014 prezzo attuale di una cripto\n"
+            "/help \u2014 questo messaggio",
             chat_id
         )
 
