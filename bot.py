@@ -1,14 +1,15 @@
-import ccxt
+import ccxt.async_support as ccxt_async  # Importante: usiamo la versione asincrona!
 import os
 import time
 import json
 import requests
+import asyncio
 from datetime import datetime, timezone, timedelta
 from threading import Thread
 
 # ===== CONFIG =====
 TIMEFRAME = '5m'
-CHECK_INTERVAL = 300  # secondi (5 minuti, allineato con la candela 5m)
+# La variabile CHECK_INTERVAL fissa non serve più, calcoleremo dinamicamente il tempo alla prossima candela.
 
 # Soglie dinamiche per categoria
 LARGE_CAPS = {'BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'TRX-USD', 'USDT-USD', 'USDC-USD'}
@@ -19,18 +20,13 @@ MID_CAPS   = {'AVAX-USD', 'LINK-USD', 'DOT-USD', 'NEAR-USD', 'APT-USD', 'ARB-USD
               'FLOKI-USD', 'WIF-USD', 'JASMY-USD', 'XLM-USD', 'TON-USD'}
 
 def get_threshold(symbol):
-    """Soglia di rialzo dinamica per dimensione della cripto."""
-    if symbol in LARGE_CAPS:
-        return 0.01   # 1% — BTC, ETH e major: anche +1% è un segnale forte
-    elif symbol in MID_CAPS:
-        return 0.03   # 3% — mid cap
-    else:
-        return 0.04   # 4% — small/micro cap
+    if symbol in LARGE_CAPS: return 0.01
+    elif symbol in MID_CAPS: return 0.03
+    else: return 0.04
 
-EXCHANGE = ccxt.coinbase()
+# Abilitiamo il rate limit automatico per non farci bloccare da Coinbase e non saltare le monete
+EXCHANGE = ccxt_async.coinbase({'enableRateLimit': True})
 
-# Tutte le cripto monitorate — allineato con Revolut X (quelle con volume su Coinbase)
-# Revolut X supporta ~400+ token; quelli non presenti qui hanno volume troppo basso o non sono su Coinbase
 SYMBOLS = [
     # --- Small/micro cap (soglia 4%) ---
     'AUCTION-USD', 'RLC-USD', 'TAIKO-USD', 'BAL-USD', 'POND-USD', 'CHILLGUY-USD', 'ABT-USD', 'AGLD-USD', 'NMR-USD', 'OCEAN-USD',
@@ -40,8 +36,7 @@ SYMBOLS = [
     'LMWR-USD', 'GTC-USD', 'CLV-USD', 'SD-USD', 'SWELL-USD', 'DYDX-USD', 'PYR-USD', 'WEN-USD', 'GME-USD', 'MLN-USD',
     'GHST-USD', 'ARPA-USD', 'NKN-USD', 'BADGER-USD', 'ALCX-USD', 'IDEX-USD', 'ASM-USD', 'HOPR-USD', 'FARM-USD', 'MATH-USD',
     'POLS-USD', 'BENJI-USD', 'RARI-USD', 'BLZ-USD', 'FIS-USD', 'SUKU-USD', 'VINU-USD', 'AVT-USD', 'VOXEL-USD', 'MDT-USD',
-    'AST-USD', 'FX-USD', 'GST-USD', 'BTRST-USD', 'HIGH-USD', 'PLA-USD', 'SHPING-USD',
-    'SAND-USD', 'ENJ-USD',   # Revolut X — gaming/NFT con buon volume su Coinbase
+    'AST-USD', 'FX-USD', 'GST-USD', 'BTRST-USD', 'HIGH-USD', 'PLA-USD', 'SHPING-USD', 'SAND-USD', 'ENJ-USD',
     # --- Mid cap (soglia 3%) ---
     'MKR-USD', 'AVAX-USD', 'LINK-USD', 'DOT-USD', 'UNI-USD', 'PEPE-USD', 'AAVE-USD', 'CRO-USD', 'APT-USD', 'NEAR-USD',
     'ICP-USD', 'ONDO-USD', 'ETC-USD', 'ALGO-USD', 'ENA-USD', 'ATOM-USD', 'VET-USD', 'POL-USD', 'ARB-USD', 'BONK-USD',
@@ -71,29 +66,24 @@ TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # ===== STATO BOT =====
-bot_active = True          # True = attivo, False = in pausa
-notified_events = {}       # (symbol, "up") -> datetime ultimo alert (cooldown 12h)
+bot_active = True
+notified_events = {}
 
 # ===== UTILS =====
 def fmt_price(p):
     p = float(p)
-    if p >= 1:
-        s = f"{p:.2f}"
-    elif p >= 0.0001:
-        s = f"{p:.6f}"
-    else:
-        s = f"{p:.8f}"
+    if p >= 1: s = f"{p:.2f}"
+    elif p >= 0.0001: s = f"{p:.6f}"
+    else: s = f"{p:.8f}"
     return s.rstrip('0').rstrip('.') if '.' in s else s
 
 def normalize_symbol(s):
     s = s.upper().strip().replace('/', '-')
-    if '-' not in s:
-        s += '-USD'
+    if '-' not in s: s += '-USD'
     return s
 
 def send_telegram(text, chat_id=None):
-    if chat_id is None:
-        chat_id = TELEGRAM_CHAT_ID
+    if chat_id is None: chat_id = TELEGRAM_CHAT_ID
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}, timeout=10)
@@ -101,93 +91,101 @@ def send_telegram(text, chat_id=None):
         print("Errore Telegram:", e)
 
 def can_notify(key):
-    """Evita notifiche duplicate per la stessa cripto entro 12 ore."""
     now = datetime.now(timezone.utc)
     last = notified_events.get(key)
-    if last and (now - last) < timedelta(hours=12):
-        return False
+    if last and (now - last) < timedelta(hours=12): return False
     return True
 
-# ===== CICLO CONTROLLO =====
-def check_and_notify():
-    now = datetime.now(timezone.utc)
-    for symbol in SYMBOLS:
+# ===== CICLO CONTROLLO ASINCRONO =====
+async def fetch_and_check(symbol, sem):
+    """Controlla una singola cripto. Il Semaphore impedisce di fare troppe richieste simultanee."""
+    async with sem:
         try:
-            ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=2)
+            ohlcv = await EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=2)
             if len(ohlcv) < 2:
-                continue
+                return
             prev_close = float(ohlcv[-2][4])
             last_close = float(ohlcv[-1][4])
             if prev_close == 0:
-                continue
+                return
             change = (last_close - prev_close) / prev_close
             threshold = get_threshold(symbol)
 
-            # Solo RIALZI — nessuna notifica per i ribassi
             if change >= threshold:
                 key = (symbol, "up")
                 if can_notify(key):
+                    now = datetime.now(timezone.utc)
                     label = "large cap" if symbol in LARGE_CAPS else ("mid cap" if symbol in MID_CAPS else "small cap")
-                    msg = (f"\U0001f7e2 *{symbol}* +{change*100:.2f}% in 5 min [{label}]\n"
-                           f"\U0001f4b5 {fmt_price(prev_close)} \u2192 {fmt_price(last_close)} USD\n"
-                           f"\U0001f552 {now.strftime('%H:%M')} UTC")
-                    send_telegram(msg)
+                    msg = (f"🟢 *{symbol}* +{change*100:.2f}% in 5 min [{label}]\n"
+                           f"💵 {fmt_price(prev_close)} ➔ {fmt_price(last_close)} USD\n"
+                           f"🕒 {now.strftime('%H:%M')} UTC")
+                    # Esegue la chiamata telegram in un thread separato per non bloccare l'asincronia
+                    await asyncio.to_thread(send_telegram, msg)
                     notified_events[key] = now
         except Exception as e:
+            # Gli errori di rate limit verranno ora in gran parte gestiti da ccxt in automatico
             print(f"Errore {symbol}: {e}")
 
-# ===== COMANDI TELEGRAM =====
+async def check_all_symbols():
+    """Lancia tutte le richieste in parallelo (max 10 alla volta)."""
+    sem = asyncio.Semaphore(10) # 10 chiamate in parallelo per scansionare velocemente ma in sicurezza
+    tasks = [fetch_and_check(sym, sem) for sym in SYMBOLS]
+    await asyncio.gather(*tasks)
+
+async def main_loop_async():
+    print("Bot avviato. Monitoraggio parallelo ottimizzato per le chiusure delle candele 5m.")
+    while True:
+        if bot_active:
+            try:
+                await check_all_symbols()
+            except Exception as e:
+                print("Errore main loop:", e)
+        
+        # Invece di dormire per 300 secondi "alla cieca", calcoliamo quanto manca al prossimo multiplo di 5 minuti.
+        # Così il bot controllerà ESATTAMENTE quando si chiude la candela (es. alle 14:00, 14:05, 14:10).
+        now = datetime.now()
+        minutes_to_next = 5 - (now.minute % 5)
+        seconds_to_sleep = (minutes_to_next * 60) - now.second
+        
+        # Aspettiamo il tempo calcolato (+2 secondi per dare tempo ai server di aggiornare la candela)
+        await asyncio.sleep(seconds_to_sleep + 2)
+
+# ===== COMANDI TELEGRAM (Invariati) =====
 def handle_command(chat_id, text):
     global bot_active
     parts = text.strip().lower().split()
-    if not parts:
-        return
+    if not parts: return
     cmd = parts[0]
 
     if cmd in ("/fine", "/stop", "/pausa"):
         bot_active = False
-        send_telegram(
-            "\u23f8 *Bot in pausa.*\n"
-            "Non riceverai pi\u00f9 notifiche finch\u00e9 non scrivi /inizia o /ricomincia.",
-            chat_id
-        )
-
+        send_telegram("⏸️ *Bot in pausa.*\nNon riceverai più notifiche finché non scrivi /inizia.", chat_id)
     elif cmd in ("/inizia", "/ricomincia", "/start"):
         bot_active = True
-        send_telegram("\u25b6\ufe0f *Bot riattivato!* Riprendo il monitoraggio crypto.", chat_id)
-
+        send_telegram("▶️ *Bot riattivato!* Riprendo il monitoraggio crypto.", chat_id)
     elif cmd == "/status":
-        stato = "\u25b6\ufe0f *Attivo* \u2014 sto monitorando tutte le crypto" if bot_active else "\u23f8 *In pausa* \u2014 scrivi /inizia per riattivarlo"
+        stato = "▶️ *Attivo*" if bot_active else "⏸️ *In pausa*"
         send_telegram(f"Stato bot: {stato}", chat_id)
-
     elif cmd == "/price" and len(parts) >= 2:
         sym = normalize_symbol(parts[1])
         try:
-            ticker = EXCHANGE.fetch_ticker(sym)
-            send_telegram(f"\U0001f4b0 *{sym}* \u2192 {fmt_price(ticker['last'])} USD", chat_id)
+            # Per i comandi usiamo la versione sincrona (standard) per comodità di thread
+            import ccxt
+            sync_exchange = ccxt.coinbase()
+            ticker = sync_exchange.fetch_ticker(sym)
+            send_telegram(f"💰 *{sym}* ➔ {fmt_price(ticker['last'])} USD", chat_id)
         except Exception as e:
             send_telegram(f"Errore prezzo {sym}: {e}", chat_id)
-
     elif cmd == "/help":
-        send_telegram(
-            "\U0001f4d6 *Comandi disponibili:*\n"
-            "/fine \u2014 metti il bot in pausa (nessuna notifica)\n"
-            "/inizia \u2014 riattiva il bot\n"
-            "/status \u2014 vedi stato attuale del bot\n"
-            "/price BTC \u2014 prezzo attuale di una cripto\n"
-            "/help \u2014 questo messaggio",
-            chat_id
-        )
+        send_telegram("📖 *Comandi:*\n/fine - pausa\n/inizia - riattiva\n/status - stato\n/price BTC - prezzo\n/help - info", chat_id)
 
-# ===== POLLING TELEGRAM =====
 def telegram_polling():
     update_id = None
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
             params = {"timeout": 30}
-            if update_id:
-                params["offset"] = update_id
+            if update_id: params["offset"] = update_id
             res = requests.get(url, params=params, timeout=35)
             if res.status_code == 200:
                 for item in res.json().get("result", []):
@@ -201,18 +199,9 @@ def telegram_polling():
             print("Polling error:", e)
         time.sleep(1)
 
-# ===== MAIN LOOP =====
-def main_loop():
-    print("Bot avviato. Monitoraggio solo rialzi con soglie dinamiche per market cap.")
-    while True:
-        if bot_active:
-            try:
-                check_and_notify()
-            except Exception as e:
-                print("Errore main loop:", e)
-        # Quando in pausa: sleep senza fare nulla — consumo CPU quasi zero
-        time.sleep(CHECK_INTERVAL)
-
 if __name__ == "__main__":
+    # Avvia il polling di telegram sul suo thread
     Thread(target=telegram_polling, daemon=True).start()
-    main_loop()
+    
+    # Avvia il nuovo ciclo asincrono del bot
+    asyncio.run(main_loop_async())
