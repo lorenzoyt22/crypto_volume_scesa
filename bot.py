@@ -34,7 +34,7 @@ SYMBOLS = [
     'CELR-USD', 'CHZ-USD', 'CLANKER-USD', 'COMP-USD', 'COOKIE-USD', 'COTI-USD', 'COW-USD', 'CRO-USD', 'CTSI-USD', 'CVC-USD', 
     'CVX-USD', 'DASH-USD', 'DEGEN-USD', 'DIA-USD', 'DIMO-USD', 'DOGINME-USD', 'DOLO-USD', 'DRIFT-USD', 
     'EDGE-USD', 'EGLD-USD', 'EIGEN-USD', 'ELA-USD', 'ENS-USD', 'EUL-USD', 'FAI-USD', 'FARM-USD', 'FIDA-USD', 'FLOW-USD', 
-    'FLUID-USD', 'FORT-USD', 'FORTH-USD', 'GALA-USD', 'GFI-USD', 'GHST-USD', 'GIGA-USD', 'GLM-USD', 'GMT-USD', 'GODS-USD', 
+    'FLUID-USD', 'FORT-USD', 'FORTH-USD', 'GFI-USD', 'GHST-USD', 'GIGA-USD', 'GLM-USD', 'GMT-USD', 'GODS-USD', 
     'GRASS-USD', 'GST-USD', 'GTC-USD', 'HFT-USD', 'HIGH-USD', 'HNT-USD', 'HONEY-USD', 'HOPR-USD', 'HYPE-USD', 'IDEX-USD', 
     'IDOS-USD', 'ILV-USD', 'IMU-USD', 'IO-USD', 'IOTX-USD', 'IP-USD', 'JTO-USD', 'KAITO-USD', 'KARRAT-USD', 'KAVA-USD', 
     'KERNEL-USD', 'KNC-USD', 'KRL-USD', 'KSM-USD', 'KTA-USD', 'L3-USD', 'LA-USD', 'LAYER-USD', 'LCX-USD', 'LMWR-USD', 
@@ -103,13 +103,24 @@ def can_notify(key):
 
 # ===== CICLO CONTROLLO ASINCRONO =====
 async def check_all_symbols():
-    global last_prices
-    try:
-        # OTTIMIZZAZIONE MASSIMA: Un'unica richiesta API per ottenere TUTTI i prezzi correnti
-        tickers = await EXCHANGE.fetch_tickers(SYMBOLS)
-    except Exception as e:
-        print("Errore fetch_tickers:", e)
-        return
+    global last_prices, SYMBOLS
+    
+    tickers = None
+    while True:
+        try:
+            # OTTIMIZZAZIONE MASSIMA: Un'unica richiesta API per ottenere TUTTI i prezzi correnti
+            tickers = await EXCHANGE.fetch_tickers(SYMBOLS)
+            break
+        except Exception as e:
+            error_str = str(e)
+            if "does not have market symbol" in error_str:
+                bad_symbol = error_str.split("symbol ")[-1].strip()
+                if bad_symbol in SYMBOLS:
+                    SYMBOLS.remove(bad_symbol)
+                    print(f"🗑️ Trovato intruso ({bad_symbol}), scartato. Riprovo subito a scaricare il resto...")
+                    continue
+            print("Errore fetch_tickers:", error_str)
+            return
 
     now = datetime.now(timezone.utc)
 
@@ -143,17 +154,35 @@ async def check_all_symbols():
         last_prices[symbol] = current_price
 
 async def main_loop_async():
-    print("Bot avviato. Monitoraggio ottimizzato a singola chiamata.")
+    global SYMBOLS
+    print("Bot avviato. Monitoraggio ottimizzato a singola chiamata con pulizia automatica.")
     
     # Primo caricamento per riempire la memoria dei prezzi senza inviare notifiche
     try:
         print("Pre-caricamento prezzi in corso...")
-        tickers = await EXCHANGE.fetch_tickers(SYMBOLS)
-        for sym in SYMBOLS:
-            if sym in tickers and tickers[sym].get('last'):
-                last_prices[sym] = tickers[sym]['last']
+        tickers = None
+        while True:
+            try:
+                tickers = await EXCHANGE.fetch_tickers(SYMBOLS)
+                break
+            except Exception as e:
+                error_str = str(e)
+                if "does not have market symbol" in error_str:
+                    bad_symbol = error_str.split("symbol ")[-1].strip()
+                    if bad_symbol in SYMBOLS:
+                        SYMBOLS.remove(bad_symbol)
+                        print(f"🗑️ Simbolo non valido saltato al pre-caricamento: {bad_symbol}")
+                        continue
+                print("Errore imprevisto nel pre-caricamento:", error_str)
+                break
+                
+        if tickers:
+            for sym in SYMBOLS:
+                if sym in tickers and tickers[sym].get('last'):
+                    last_prices[sym] = tickers[sym]['last']
+            print(f"Pre-caricamento completato. {len(last_prices)} crypto monitorate attivamente.")
     except Exception as e:
-        print("Errore nel pre-caricamento:", e)
+        print("Errore fatale nel pre-caricamento:", e)
 
     while True:
         # Calcoliamo prima quanto manca al prossimo multiplo di 5 minuti
