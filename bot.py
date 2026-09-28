@@ -102,7 +102,6 @@ def can_notify(key):
 async def check_all_symbols():
     global last_prices, SYMBOLS
     
-    # Convertiamo i simboli nel formato compreso dall'exchange (BTC/USD)
     ccxt_symbols = [s.replace('-', '/') for s in SYMBOLS]
     tickers = None
     
@@ -126,7 +125,6 @@ async def check_all_symbols():
     now = datetime.now(timezone.utc)
 
     for symbol in SYMBOLS:
-        # Cerchiamo il risultato usando il formato corretto (con la /)
         ticker = tickers.get(symbol.replace('-', '/'))
         if not ticker: continue
         
@@ -180,7 +178,6 @@ async def main_loop_async():
                 
         if tickers:
             for sym in SYMBOLS:
-                # Recuperiamo il prezzo dalla risposta usando la sbarra
                 ticker = tickers.get(sym.replace('-', '/'))
                 if ticker and ticker.get('last'):
                     last_prices[sym] = ticker['last']
@@ -195,6 +192,7 @@ async def main_loop_async():
         
         await asyncio.sleep(seconds_to_sleep + 2)
         
+        # Durante la pausa (bot_active = False), il bot salta interamente questo controllo
         if bot_active:
             await check_all_symbols()
 
@@ -207,10 +205,11 @@ def handle_command(chat_id, text):
 
     if cmd in ("/fine", "/stop", "/pausa"):
         bot_active = False
-        send_telegram("⏸️ *Bot in pausa.*\nNon riceverai più notifiche finché non scrivi /inizia.", chat_id)
+        send_telegram("⏸️ *Bot in pausa.*\nNessun controllo sui prezzi verrà effettuato a consumo zero.", chat_id)
     elif cmd in ("/inizia", "/ricomincia", "/start"):
         bot_active = True
-        send_telegram("▶️ *Bot riattivato!* Riprendo il monitoraggio crypto.", chat_id)
+        last_prices.clear()  # <-- IL TRUCCO: SVUOTA I PREZZI VECCHI PER EVITARE FALSI ALLARMI
+        send_telegram("▶️ *Bot riattivato!* Memoria azzerata. Stabilisco i nuovi prezzi base, il monitoraggio ripartirà tra 5 minuti.", chat_id)
     elif cmd == "/status":
         stato = "▶️ *Attivo*" if bot_active else "⏸️ *In pausa*"
         send_telegram(f"Stato bot: {stato}", chat_id)
