@@ -71,14 +71,17 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # ===== STATO DEL BOT (In RAM) =====
 bot_active = True
-limit_mode = False          # False = FOMO illimitata, True = Max 2 alert ogni 4 ore
-parachute_active = True     # True = Paracadute attivo (sopra il 20%), False = Spento via comando
+limit_mode = False          
+parachute_active = True     
 
-alert_history = {}          # Storico orari alert 24h
-last_prices = {}            # Prezzo di riferimento per lo scatto successivo
-last_volumes = {}           # Volume precedente per calcolare i dollari nei 5 min
-pump_start_prices = {}      # Prezzo di partenza del pump (1° alert)
-fomo_peaks = {}             # Picchi massimi per il paracadute
+alert_history = {}          
+last_prices = {}            
+last_volumes = {}           
+pump_start_prices = {}      
+fomo_peaks = {}             
+
+# Stato Connessione
+is_connected = True
 
 # ===== UTILS =====
 def fmt_price(p):
@@ -111,20 +114,16 @@ def extract_usd_volume(ticker, current_price):
     return None
 
 def get_btc_change(tickers):
-    """Calcola la variazione di BTC nelle 24h per fare il confronto con il mercato."""
     btc_ticker = tickers.get('BTC/USD')
     if btc_ticker and btc_ticker.get('percentage') is not None:
         return float(btc_ticker['percentage'])
     return None
 
 def analyze_liquidity_and_volume(symbol, ticker, current_vol_24h, prev_vol_24h, current_price):
-    """Analisi non invasiva della liquidità (Spread + Dollari nei 5 min) per le Small Cap."""
     if symbol in LARGE_CAPS or symbol in MID_CAPS:
         return ""
     
     notes = []
-    
-    # 1. Controllo Spread Bid/Ask
     bid = ticker.get('bid')
     ask = ticker.get('ask')
     if bid and ask and bid > 0:
@@ -134,7 +133,6 @@ def analyze_liquidity_and_volume(symbol, ticker, current_vol_24h, prev_vol_24h, 
         elif spread_pct >= 0.8:
             notes.append(f"⚠️ Spread: {spread_pct:.1f}%")
 
-    # 2. Dollari reali entrati negli ultimi 5 minuti
     if current_vol_24h is not None and prev_vol_24h is not None and current_vol_24h > prev_vol_24h:
         vol_5m = current_vol_24h - prev_vol_24h
         if vol_5m < 1000:
@@ -175,27 +173,43 @@ def get_active_24h_count(symbol, now):
         fomo_peaks.pop(symbol, None)
     return len(history)
 
-# ===== CICLO CONTROLLO ASINCRONO =====
-async def check_all_symbols():
-    global SYMBOLS
-    
+# ===== CICLO CONTROLLO ASINCRONO CON AUTO-RECOVERY =====
+async def check_all_symbols_with_retry():
+    global is_connected, SYMBOLS
     ccxt_symbols = [s.replace('-', '/') for s in SYMBOLS]
     tickers = None
+    max_retries = 3
     
-    try:
-        tickers = await EXCHANGE.fetch_tickers(ccxt_symbols)
-    except Exception as e:
-        error_str = str(e)
-        if "does not have market symbol" in error_str:
-            bad_ccxt_sym = error_str.split("symbol ")[-1].strip()
-            bad_sym = bad_ccxt_sym.replace('/', '-')
-            if bad_sym in SYMBOLS:
-                SYMBOLS.remove(bad_sym)
-                ccxt_symbols.remove(bad_ccxt_sym)
-                print(f"🗑️ Trovato intruso ({bad_sym}), scartato.")
+    for attempt in range(1, max_retries + 1):
+        try:
+            tickers = await EXCHANGE.fetch_tickers(ccxt_symbols)
+            break
+        except Exception as e:
+            error_str = str(e)
+            if "does not have market symbol" in error_str:
+                bad_ccxt_sym = error_str.split("symbol ")[-1].strip()
+                bad_sym = bad_ccxt_sym.replace('/', '-')
+                if bad_sym in SYMBOLS:
+                    SYMBOLS.remove(bad_sym)
+                    ccxt_symbols.remove(bad_ccxt_sym)
+                    print(f"🗑️ Trovato intruso ({bad_sym}), scartato.")
+                continue
+            
+            print(f"Tentativo {attempt}/{max_retries} fallito: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(5) # Attende 5 secondi prima di riprovare
+
+    if not tickers:
+        # Se falliscono tutti i tentativi e prima eravamo connessi, avvisa l'utente
+        if is_connected:
+            is_connected = False
+            asyncio.create_task(asyncio.to_thread(send_telegram, "⚠️ *Connessione a Coinbase temporaneamente instabile.*\nIl bot sta continuando a riprovare automaticamente..."))
         return
 
-    if not tickers: return
+    # Se la connessione era saltata ed è andata a buon fine, invia il messaggio di ripristino
+    if not is_connected:
+        is_connected = True
+        asyncio.create_task(asyncio.to_thread(send_telegram, "✅ *Linea ritornata stabile!* Connessione con Coinbase ripristinata con successo."))
 
     now = datetime.now(timezone.utc)
     btc_change = get_btc_change(tickers)
@@ -214,13 +228,12 @@ async def check_all_symbols():
 
         active_alerts = get_active_24h_count(symbol, now)
 
-        # --- PARACADUTE ANTI-DUMP (Solo se attivo, pump > 20% e >= 2 alert) ---
+        # Paracadute Anti-Dump
         if parachute_active and active_alerts >= 2 and symbol in fomo_peaks:
             peak_data = fomo_peaks[symbol]
             start_p = pump_start_prices.get(symbol, peak_data['peak'])
             total_gain_from_start = (peak_data['peak'] - start_p) / start_p if start_p > 0 else 0
             
-            # Si attiva solo se il picco ha superato il +20% dall'inizio
             if total_gain_from_start >= MIN_PEAK_FOR_DUMP:
                 if current_price > peak_data['peak']:
                     peak_data['peak'] = current_price
@@ -234,7 +247,7 @@ async def check_all_symbols():
                                     f"🕒 {now.strftime('%H:%M')} UTC")
                         asyncio.create_task(asyncio.to_thread(send_telegram, dump_msg))
 
-        # --- LOGICA DI SALITA A GRADINI ---
+        # Logica di salita a gradini
         if symbol in last_prices:
             prev_price = last_prices[symbol]
             if prev_price > 0:
@@ -255,7 +268,6 @@ async def check_all_symbols():
                         tot_change = ((current_price - start_p) / start_p) * 100 if start_p > 0 else change * 100
                         tot_str = f"\n🚀 *Totale da inizio FOMO:* +{tot_change:.2f}%" if count_24h > 1 else ""
                         
-                        # Confronto Bitcoin
                         btc_note = ""
                         if symbol != 'BTC-USD' and btc_change is not None:
                             if btc_change < 0.5:
@@ -279,12 +291,11 @@ async def check_all_symbols():
         else:
             last_prices[symbol] = current_price
 
-    # Pulizia RAM aggressiva per Railway a fine ciclo
     gc.collect()
 
 async def main_loop_async():
     global SYMBOLS
-    print("Bot avviato con tutte le ottimizzazioni FOMO, Paracadute e Liquidità.")
+    print("Bot avviato con gestione errori e auto-recovery attivi.")
     
     try:
         ccxt_symbols = [s.replace('-', '/') for s in SYMBOLS]
@@ -300,7 +311,7 @@ async def main_loop_async():
                         last_volumes[sym] = v
             print(f"✅ Pre-caricamento completato. {len(last_prices)} crypto monitorate.")
     except Exception as e:
-        print("Errore nel pre-caricamento:", e)
+        print("Errore nel pre-caricamento iniziale:", e)
 
     while True:
         now = datetime.now()
@@ -311,9 +322,9 @@ async def main_loop_async():
         
         if bot_active:
             try:
-                await check_all_symbols()
+                await check_all_symbols_with_retry()
             except Exception as e:
-                print("Errore nel ciclo principale:", e)
+                print("Errore critico nel ciclo principale:", e)
 
 # ===== COMANDI TELEGRAM =====
 def handle_command(chat_id, text):
@@ -358,7 +369,8 @@ def handle_command(chat_id, text):
         stato = "▶️ *Attivo*" if bot_active else "⏸️ *In pausa*"
         modo = "🛡️ *Limitata (2/4h)*" if limit_mode else "🚀 *FOMO illimitata*"
         para = "🪂 *Attivo (>20%)*" if parachute_active else "❌ *Spento*"
-        send_telegram(f"Stato: {stato}\nMod.: {modo}\nParacadute: {para}", chat_id)
+        conn = "🟢 *Connesso*" if is_connected else "⚠️ *Instabile (In retry)*"
+        send_telegram(f"Stato: {stato}\nConnessione: {conn}\nMod.: {modo}\nParacadute: {para}", chat_id)
     
     elif cmd == "/price" and len(parts) >= 2:
         sym = normalize_symbol(parts[1])
